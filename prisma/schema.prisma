@@ -1,0 +1,151 @@
+// ============================================================
+// Prisma 資料模型（對應原 Django models）
+//
+//   Application      ← 原 Application（客人申請主表）
+//   ApplicationDetail ← 原 ApplicationDetail（內部補充資料，客人看不到）
+//   FollowUpLog      ← 原 FollowUpLog（跟進紀錄/審計軌跡）
+//   User             ← 原 Django User（含 role: ADMIN/STAFF）
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── 使用者角色（對應原 is_superuser / is_staff）──
+enum Role {
+  ADMIN // 管理員（原 superuser）
+  STAFF // 員工
+}
+
+// ── 申請狀態（對應原 STATUS_CHOICES）──
+enum ApplicationStatus {
+  PENDING_CONTACT // 待聯繫
+  CONTACTED // 已聯繫（跟進中）
+  COMPLETED // 已完成
+  NOT_ACCEPTED // 未採納（潛在客）
+}
+
+// ── 付款狀態 ──
+enum PaymentStatus {
+  UNPAID // 未找數
+  PAID // 已找數
+}
+
+// ── 服務類型 ──
+enum ServiceType {
+  OFFICE // 辦公室清潔
+  HOME // 家居清潔
+  DEEP // 深層清潔
+  RENOVATION // 裝修後清潔
+  MOVE_IN // 入伙前清潔
+  CARPET // 洗地毯
+  FLOOR // 地板打蠟／拋光
+  WINDOW // 玻璃幕牆／抹窗
+  OTHER // 其他
+}
+
+// ── 跟進紀錄動作 ──
+enum FollowUpAction {
+  CONTACT // 聯繫
+  QUOTE_CALL // 報價通話
+  NOTE // 備註
+  COMPLETED // 完成
+}
+
+// ============================================================
+// 使用者（Staff / Admin）
+// ============================================================
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  name         String?
+  role         Role     @default(STAFF)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // 關聯
+  assignedApplications Application[]         @relation("AssignedApplications")
+  updatedDetails       ApplicationDetail[]   @relation("DetailUpdatedBy")
+  logs                 FollowUpLog[]
+}
+
+// ============================================================
+// 申請主表（客人填寫 + 狀態/時間戳）
+// ============================================================
+model Application {
+  id            String            @id @default(cuid())
+  salutation    String // 稱呼
+  phone         String // 電話
+  whatsapp      String? // WhatsApp
+  email         String? // Email
+  company       String? // 公司
+  district      String // 地區
+  squareFeet    String? // 尺數
+  remark        String? // 備注
+
+  // ── staff 補充 ──
+  serviceType   ServiceType? // 服務類型
+
+  // ── 狀態 ──
+  status        ApplicationStatus @default(PENDING_CONTACT)
+  paymentStatus PaymentStatus? // 付款狀態
+
+  // ── 不可更改時間戳（由 server 按下當下寫入）──
+  contactedAt DateTime? // 聯繫時間
+  completedAt DateTime? // 完成時間
+
+  // ── 負責人 ──
+  assignedToId String?
+  assignedTo   User?    @relation("AssignedApplications", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  // ── 關聯 ──
+  detail ApplicationDetail?
+  logs   FollowUpLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([completedAt])
+}
+
+// ============================================================
+// 內部補充資料（Staff/Admin 用，客人看不到）
+// ============================================================
+model ApplicationDetail {
+  id              String      @id @default(cuid())
+  applicationId   String      @unique
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  detailedAddress String? // 詳細地址
+  cleaningScope   String? // 清潔範圍
+  accessInfo      String? // 進入方式/鎖匙/密碼
+  internalNotes   String? // 內部備註
+
+  updatedById String?
+  updatedBy   User?  @relation("DetailUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================================
+// 跟進紀錄（審計軌跡）
+// ============================================================
+model FollowUpLog {
+  id            String         @id @default(cuid())
+  applicationId String
+  application   Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action        FollowUpAction
+  note          String?
+  createdAt     DateTime       @default(now())
+
+  @@index([applicationId])
+}
