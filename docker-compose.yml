@@ -1,33 +1,14 @@
-# 三服務架構：db + migrate（一次性）+ app（Next.js standalone）
-# - migrate：用 build stage image（有齊 prisma CLI + tsx），每次 compose up 跑一次
-#   db push + seed（seed 係 upsert，重複執行安全），跑完自動退出
-# - app：等 migrate 成功先起；對外入口（經 npm-net 由 NPM 反向代理）
-# - db：只喺 internal network，公網掂唔到
+# 方案 B：共用 PG（shared-db，喺 ../shared-db 起動）
+# - migrate：每次 compose up 跑一次 db push + seed（DB 喺 shared-db）
+# - app：等 migrate 成功先起
+# 兩個服務都喺 npm-net，直接以容器名 shared-db 連資料庫
 #
-# 首次部署前喺伺服器執行一次：
-#   docker network create npm-net
-#   docker network connect npm-net <NPM 容器名>
-# 並複製 .env.example 為 .env 填入真實值
+# .env 嘅 POSTGRES_PASSWORD 要同 shared-db 嘅密碼一致
+# 首次部署前（伺服器）：
+#   docker network create npm-net && docker network connect npm-net <NPM容器名>
+#   cd ../shared-db && docker compose up -d   ← 共用 PG 先起
 
 services:
-  db:
-    image: postgres:16-alpine
-    container_name: cleaning-nextjs-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-popo_db}
-      POSTGRES_USER: ${POSTGRES_USER:-popo}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?請喺 .env 設定 POSTGRES_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-popo} -d ${POSTGRES_DB:-popo_db}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - internal
-
   migrate:
     build:
       context: .
@@ -36,13 +17,10 @@ services:
     restart: "no"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-popo}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-popo_db}?schema=public
-    depends_on:
-      db:
-        condition: service_healthy
+      DATABASE_URL: postgresql://popo:${POSTGRES_PASSWORD}@shared-db:5432/cleaning_nextjs_db?schema=public
     command: sh -c "npx prisma db push && npx tsx prisma/seed.ts"
     networks:
-      - internal
+      - npm-net
 
   app:
     build: .
@@ -50,29 +28,19 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # .env 用 POSTGRES_* 統一俾 db 容器同呢度共用，
-      # DATABASE_URL 由 compose 組裝（避免 URL 同 db 密碼唔一致）
-      DATABASE_URL: postgresql://${POSTGRES_USER:-popo}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-popo_db}?schema=public
+      DATABASE_URL: postgresql://popo:${POSTGRES_PASSWORD}@shared-db:5432/cleaning_nextjs_db?schema=public
       # Auth.js v5 喺反向代理後需要信任 proxy 嘅 Host header
       AUTH_TRUST_HOST: "true"
       # Docker 會自動 set HOSTNAME=容器ID，Next standalone 會跟住 bind 落單一
-      # interface——強制設 0.0.0.0 等 npm-net / internal 兩個 network 都通
+      # interface——強制設 0.0.0.0
       HOSTNAME: "0.0.0.0"
     depends_on:
-      db:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     # 唔開 host port：由 NPM Proxy Host 指向 cleaning-nextjs-app:3000
     networks:
       - npm-net
-      - internal
 
 networks:
   npm-net:
     external: true
-  internal:
-    driver: bridge
-
-volumes:
-  pgdata:
