@@ -35,7 +35,7 @@ services:
       # interface——強制設 0.0.0.0
       HOSTNAME: "0.0.0.0"
       # tRPC Redis 限流（fail-open：Redis 死咗自動放行）
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://cleaning-nextjs-redis:6379
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
     depends_on:
       migrate:
