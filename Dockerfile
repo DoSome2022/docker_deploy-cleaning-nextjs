@@ -34,6 +34,10 @@ COPY --from=build /app/public ./public
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 
+# redis client（standalone trace 同樣唔包，tRPC 限流用，補返）
+COPY --from=build /app/node_modules/redis ./node_modules/redis
+COPY --from=build /app/node_modules/@redis ./node_modules/@redis
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \

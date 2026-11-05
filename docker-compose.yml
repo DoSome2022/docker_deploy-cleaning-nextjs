@@ -34,12 +34,38 @@ services:
       # Docker 會自動 set HOSTNAME=容器ID，Next standalone 會跟住 bind 落單一
       # interface——強制設 0.0.0.0
       HOSTNAME: "0.0.0.0"
+      # tRPC Redis 限流（fail-open：Redis 死咗自動放行）
+      REDIS_URL: redis://redis:6379
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     # 唔開 host port：由 NPM Proxy Host 指向 cleaning-nextjs-app:3000
     networks:
       - npm-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: cleaning-nextjs-redis
+    ports:
+      # 本機 6379~6386 已被其他項目佔用，故此項目用 6387；只為本地除錯用，VPS 上可刪除
+      - "6387:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - cleaning-nextjs-redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - npm-net
+
+volumes:
+  cleaning-nextjs-redis-data:
 
 networks:
   npm-net:

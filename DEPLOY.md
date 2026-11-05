@@ -1,11 +1,11 @@
 # 部署指南（騰訊雲輕量伺服器・香港・NPM 已裝）
 
-架構：`NPM (80/443) → npm-net → cleaning-nextjs-app (Next standalone :3000) → internal → db (PostgreSQL)`
+架構：`NPM (80/443) → npm-net → cleaning-nextjs-app (Next standalone :3000) → internal → db (PostgreSQL) + redis (限流)`
 
 ```
 公網 ──► NPM ──► app（Next.js 自己 serve 前後端 + /api/trpc + /api/auth）
-                      │
-                      └──► db（內網，公網掂唔到）
+                      │                │
+                      └──► db（內網）   └──► redis（tRPC 限流，fail-open）
 
 （migrate 係一次性服務：每次 compose up 先跑 db push + seed，成功後 app 先起）
 ```
@@ -85,3 +85,5 @@ docker compose exec db pg_dump -U popo popo_db > backup_$(date +%F).sql
 | 改咗 schema 唔生效 | `docker compose restart app`（啟動時自動 db push） |
 | NPM 出 502 | `docker ps` 睇 cleaning-nextjs-app 係咪 up 兼喺 `npm-net` 度；healthcheck 要轉 healthy |
 | seed 唔想每次跑 | 喺 `docker-compose.yml` 刪 `migrate` 服務 command 入面嘅 `npx tsx prisma/seed.ts` |
+| API 回 429「請求次數過多」 | tRPC 限流生效：預設 120 次/分鐘/IP（`.env` 嘅 `RATE_LIMIT_MAX` 可調，`0` = 關閉）；Redis 死咗會自動放行 |
+| Redis 狀態 | `docker compose exec redis redis-cli ping` → PONG；限流計數：`docker compose exec redis redis-cli --scan --pattern 'rl:*'` |
